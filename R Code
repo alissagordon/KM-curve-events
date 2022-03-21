@@ -1,0 +1,133 @@
+###Code by Alissa Gordon###
+
+##output number of events from km curve##
+
+##packages needed for kaplan meier survival analysis##
+library(survival)
+library(survminer)
+
+##establishing experimental variables/inputs##
+n<-170 #subgroup size (subgroups: primary and metastatic)
+pmedian<-3 #primary lifespan median
+mmedian<-2 #metastatic lifespan median
+plambda<-log(2)/pmedian #finds lambda for which median of exp curve would be pmedian
+mlambda<-log(2)/mmedian #finds lambda for which median of exp curve would be mmedian
+yearsrecruiting<-3 #years recruiting participants
+yearsoftrial<-7 #years of trial
+replications<-100
+#establishing dataframe in the trial function
+survival<-NA
+group<-NA
+enrollment<-NA
+newvalue<-NA
+total<-2*n
+count<-(1:total)
+#'n' is subgroup size
+
+status1<-NA #1=death 0=censored
+status2<-NA
+status<-NA 
+time<-NA
+d<-data.frame(cbind( count, enrollment, group, survival,newvalue, status1, status2, status, time))
+
+##function for a singular trial of kaplan meier curve##
+trial<-function()
+{
+  group<-rep(c(1,2),each=n) # primary=1 and metastatic=2; n rows created for each treatment (2n total rows)
+  enrollment<-runif(2*n, min=0, max=yearsrecruiting) #enrollment randomly generated from a uniform distribution from 0 to yearsrecruiting
+  survival<-ifelse (group==1, time<-rexp(n, plambda), time<-rexp(n, mlambda)) #randomly generates survival times based off exponential model and lambda calculated for each group
+  
+  
+  ##establishing censor rate of around 10%##
+  censoring<- n%/%5 #20% of data potentially censored (will be around 10% after process); evenly rounded in order to use in sample size estimation (decimals interfere with dataframe size)
+  censoringp<-survival[1:censoring] #the first 20% of p data marked for potential censoring
+  censoringm<-survival[n+1:censoring] #the first 20% of m data marked for potential censoring
+  
+  ###creates a new column that generates numbers for the marked data from same exponential dataset##
+  for (val in censoringp) {
+    censornumberp<-rexp(censoring, plambda)
+  } 
+  for (val in censoringm){
+    censornumberm<-rexp(censoring,mlambda)
+  }
+  
+  d<- data.frame(survival,group, enrollment)
+  d['newvalue']<-NA
+  d['status1']<-NA #1=death 0=censored
+  d['status2']<-NA
+  d['status']<-NA
+  d['time']<-NA
+  
+  
+  ##random censoring##
+  for (i in 1:length(censoringp)){
+    ifelse(censoringp[i]<censornumberp[i], d$newvalue[i]<-survival[i], d$newvalue[i]<-censornumberp[i])
+  } #if the potential censor value is less than the original survival time, subject is censored.  This change in time or lack of change is represented by newvalue
+  
+  for (i in 1:length(censoringm)){
+    ifelse(censoringm[i]<censornumberm[i], d$newvalue[n+i]<-survival[n+i], d$newvalue[n+i]<-censornumberm[i])
+  }#same process but with metastatic patients
+  
+  for (i in 1:length(survival)){
+    if (is.na(d$newvalue[i])){
+      d$newvalue[i]<-survival[i]
+    }
+  }
+  ##marks censored data based off of randomness##
+  for (i in 1:length(survival)){
+    ifelse(d$newvalue[i]<survival[i], d$status1[i]<-0, d$status1[i]<-1)
+  } 
+  
+  time<-d$newvalue+enrollment
+  
+  ##censors if time is more than yearsoftrial##
+  for (i in 1: length(survival)){
+    ifelse(time[i]>yearsoftrial, d$status2[i]<-0, d$status2[i]<-1)
+  } #marks as censored in status2 if time>yearsoftrial
+  
+  for(i in 1:length(survival)){
+    ifelse(d$status2[i]==0,d$newvalue[i]<-yearsoftrial-enrollment[i],d$newvalue[i]<-d$newvalue[i])
+  } #if censored, newvalue (variable being analyzed in km curve) is yearsoftrial minus enrollment, otherwise newvalue remains initial survival time
+  
+  
+  
+  
+  
+  ##marks as censored in new variable status if censored either due to time or randomness##
+  for(i in 1:length(survival)){
+    ifelse(d$status1[i]==0|d$status2[i]==0, d$status[i]<-0, d$status[i]<-1)
+  }
+  
+  
+  ##km curve output and p value##
+  kmcurve<-survfit(Surv(d$newvalue, d$status)~group, data=d)  #creates curve model of newvalue, censored by status, and sorted by group
+  ggsurvplot(kmcurve, break.x.by=1, surv.median.line = "v", risk.table = "nrisk_cumevents", cumcensor=TRUE, xscale=1)
+  survdiff(Surv(d$newvalue)~group) #plots the curve and shows risk, event, and censor table by year
+  survdifffxn<- survdiff(Surv(d$newvalue)~group)
+  events1<-sum(kmcurve$n.event==1 & d$group==1)
+  events2<-sum(kmcurve$n.event==1 & d$group==2)
+  events<-c(events1, events2)
+  return(events) #returns number of events for group 1, number of events for group 2
+}  
+
+Events<-replicate(replications, trial()) #collects how many events occurred for 100 trials
+Events1<-Events[1,] #Just number of events for primary 
+Events2<-Events[2,] #Just number of events for metastatic
+par(mfrow=c(1,2))
+hist(Events1, breaks=seq(min(Events), max(Events)), main='Primary Events')
+hist(Events2, breaks=seq(min(Events), max(Events)), main='Metastatic Events')
+max(Events1)
+min(Events1)
+mean(Events1)
+sd(Events1)
+max(Events2)
+min(Events2)
+mean(Events2)
+sd(Events2)
+
+Total<-Events1+Events2
+hist(Total)
+max(Total)
+min(Total)
+mean(Total)
+sd(Total)
